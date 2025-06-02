@@ -54,6 +54,11 @@ class FractalGenerator:
                                       command=lambda: self.generate_fractal('burning_ship'))
         self.burning_ship_btn.pack(side=tk.LEFT, padx=5)
         
+        # Eliminar estas líneas
+        # self.fsr_btn = ttk.Button(button_frame, text="Subdivision Fractal", 
+        #                          command=lambda: self.generate_fractal('fsr'))
+        # self.fsr_btn.pack(side=tk.LEFT, padx=5)
+        
         # Create save button
         self.save_btn = ttk.Button(button_frame, text="Save HD Image", command=self.save_image)
         self.save_btn.pack(side=tk.LEFT, padx=20)  # Added more padding to separate from fractal buttons
@@ -228,13 +233,15 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def generate_fractal_chunk(self, params):
         """Generate a portion of the fractal"""
-        start_row, end_row, width, height, C, color_mults, color_phases = params
+        start_row, end_row, width, height, C, color_mults, color_phases, x_range, y_range = params
         chunk = np.zeros((end_row - start_row, width, 3), dtype=np.uint8)
         
-        # Calculate boundaries
-        x = np.linspace(-1.5, 1.5, width)
-        y = np.linspace(-1, 1, height)
-        X, Y = np.meshgrid(x, y[start_row:end_row])
+        # Use the provided x and y ranges
+        x = x_range
+        y = y_range[start_row:end_row]
+        
+        # Create mesh grid for this chunk
+        X, Y = np.meshgrid(x, y)
         Z = X + Y*1j
         
         # Usar los parámetros de color recibidos
@@ -248,46 +255,98 @@ Generation Time: {info.get('time', 'N/A')} seconds
             mask = np.abs(Z) <= 2
             Z[mask] = Z[mask]**2 + C
             iteration_count[mask] = i
-    
+
         log_zn = np.log2(np.abs(Z))
         smooth_iter = iteration_count + 1 - np.log2(log_zn)
-    
+
         # Apply coloring
         chunk[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 + 128
         chunk[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 + 128
         chunk[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 + 128
-    
+
         # Ensure no pure black areas
         dark_mask = np.all(chunk < 30, axis=2)
         chunk[dark_mask] = [30, 30, 30]
-    
+
         return chunk
 
     def generate_julia(self):
         start_time = time.time()
-    
-        # Interesting Julia set parameters and regions
-        julia_regions = [
-            {'C': complex(-0.4, 0.6), 'center': (0, 0), 'zoom': 1},  # Dragon-like
-            {'C': complex(0.285, 0), 'center': (0.2, 0.2), 'zoom': 2},  # Dendrite
-            {'C': complex(0.45, 0.1428), 'center': (-0.3, 0), 'zoom': 1.5},  # Exotic Spiral
-            {'C': complex(-0.70176, -0.3842), 'center': (0.1, -0.2), 'zoom': 2.5},  # Spiraling Tendrils
-            {'C': complex(-0.835, -0.2321), 'center': (-0.1, 0.3), 'zoom': 1.8},  # Delicate Branches
-            {'C': complex(0.35, 0.35), 'center': (0, -0.1), 'zoom': 2.2},  # Symmetric Pattern
-            {'C': complex(0, 0.8), 'center': (0.15, 0.15), 'zoom': 1.7},  # Rabbit-like
-            {'C': complex(-0.123, 0.745), 'center': (-0.2, 0.1), 'zoom': 2.3},  # Douady's Rabbit
-            {'C': complex(-0.391, -0.587), 'center': (0.1, 0.1), 'zoom': 1.9},  # Spiral Galaxy
-            {'C': complex(-0.54, 0.54), 'center': (-0.1, -0.1), 'zoom': 2.1}  # Exotic Flower
-        ]
+        max_attempts = 5  # Número máximo de intentos para encontrar una región interesante
+
+        for attempt in range(max_attempts):
+            # Interesting Julia set parameters and positions
+            julia_regions = [
+                {
+                    'C': complex(-0.4, 0.6), 
+                    'center': (-0.1, 0.2),
+                    'zoom': 200
+                },  # Dragon-like with detail
+                {
+                    'C': complex(0.285, 0), 
+                    'center': (0.3, -0.1),
+                    'zoom': 150
+                },  # Dendrite detail
+                {
+                    'C': complex(0.45, 0.1428),
+                    'center': (0, 0.15),
+                    'zoom': 180
+                },  # Exotic Spiral focus
+                {
+                    'C': complex(-0.70176, -0.3842),
+                    'center': (-0.2, 0.1),
+                    'zoom': 250
+                },  # Spiraling detail
+                {
+                    'C': complex(-0.835, -0.2321),
+                    'center': (0.1, -0.3),
+                    'zoom': 300
+                },  # Branch detail
+                {
+                    'C': complex(0.35, 0.35),
+                    'center': (-0.15, 0.15),
+                    'zoom': 220
+                }  # Symmetric detail
+            ]
+            
+            # Random selection of region and parameters
+            region = random.choice(julia_regions)
+            self.C = region['C']
+            base_zoom = region['zoom']
+            zoom = base_zoom * random.uniform(0.5, 2.0)
+            center_x, center_y = region['center']
+            
+            # Add some random variation to the center position
+            center_x += random.uniform(-0.1, 0.1)
+            center_y += random.uniform(-0.1, 0.1)
+            
+            # Calculate boundaries and generate a sample
+            x_range = 3.0 / zoom
+            y_range = x_range * self.height / self.width
+            x = np.linspace(center_x - x_range/2, center_x + x_range/2, 100)  # Muestra pequeña
+            y = np.linspace(center_y - y_range/2, center_y + y_range/2, 100)
+            X, Y = np.meshgrid(x, y)
+            Z = X + Y*1j
+            
+            # Calcular una muestra rápida para verificar la región
+            iteration_count = np.zeros_like(Z, dtype=int)
+            for i in range(50):  # Menos iteraciones para la prueba
+                mask = np.abs(Z) <= 2
+                Z[mask] = Z[mask]**2 + self.C
+                iteration_count[mask] = i
+
+            # Verificar si la región es interesante
+            unique_values = np.unique(iteration_count)
+            if len(unique_values) > 10 and np.mean(iteration_count) > 5:
+                # La región es interesante, proceder con la generación completa
+                break
+            elif attempt == max_attempts - 1:
+                # Si es el último intento, usar la región más segura
+                self.C = complex(-0.4, 0.6)  # Valor conocido que genera patrones interesantes
+                center_x, center_y = (0, 0)
+                zoom = 150
         
-        # Random selection of region and parameters
-        region = random.choice(julia_regions)
-        self.C = region['C']
-        center_x, center_y = region['center']
-        base_zoom = region['zoom']
-        zoom = base_zoom * random.uniform(0.5, 2.5)
-        
-        # Calculate boundaries based on zoom and center
+        # Continuar con el código existente de generación
         x_range = 3.0 / zoom
         y_range = x_range * self.height / self.width
         x = np.linspace(center_x - x_range/2, center_x + x_range/2, self.width)
@@ -306,31 +365,48 @@ Generation Time: {info.get('time', 'N/A')} seconds
         phase_g = random.random() * 2 * np.pi
         phase_b = random.random() * 2 * np.pi
         
+        # Initialize array for final image
+        image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        
         with ThreadPoolExecutor() as executor:
             futures = []
             for i in range(chunks):
                 start_row = i * chunk_size
                 end_row = start_row + chunk_size if i < chunks - 1 else self.height
-                # Pasar los parámetros de color a cada chunk
-                params = (start_row, end_row, self.width, self.height, self.C, 
-                     (r_mult, g_mult, b_mult), (phase_r, phase_g, phase_b))
+                
+                params = (
+                    start_row, 
+                    end_row, 
+                    self.width, 
+                    self.height, 
+                    self.C,
+                    (r_mult, g_mult, b_mult), 
+                    (phase_r, phase_g, phase_b),
+                    x,  # Añadimos los rangos x e y calculados
+                    y
+                )
                 futures.append(executor.submit(self.generate_fractal_chunk, params))
                 self.update_progress((i + 1) * 25)
-            
+        
+            # Combine all chunks
             image = np.vstack([f.result() for f in futures])
     
         self.update_progress(100)
         
-        # Add fractal information with color parameters
+        # Add fractal information with enhanced parameters
         self.current_fractal_info = {
             'type': 'Julia Set',
-            'parameters': f'C: {self.C}, Center: ({center_x:.4f}, {center_y:.4f}), Zoom: {zoom:.1f}x',
+            'parameters': (
+                f'C: {self.C}, '
+                f'Center: ({center_x:.4f}, {center_y:.4f}), '
+                f'Zoom: {zoom:.1f}x'
+            ),
             'iterations': 1000,
             'color_info': f'RGB multipliers: ({r_mult}, {g_mult}, {b_mult})',
             'phase_info': f'Phase shifts: ({phase_r:.4f}, {phase_g:.4f}, {phase_b:.4f})',
             'time': f"{time.time() - start_time:.2f}"
         }
-    
+
         return image
 
     def generate_mandelbrot(self):
@@ -364,15 +440,20 @@ Generation Time: {info.get('time', 'N/A')} seconds
         C = X + Y*1j
         Z = np.zeros_like(C)
         
-        # Enhanced color parameters
-        r_mult = random.randint(3, 12)
-        g_mult = random.randint(3, 12)
-        b_mult = random.randint(3, 12)
+        # Enhanced color parameters - Modificamos esta parte
+        r_mult = random.randint(5, 15)  # Aumentamos el rango
+        g_mult = random.randint(5, 15)
+        b_mult = random.randint(5, 15)
         
-        # Phase shifts for smooth color transitions
-        phase_r = random.random() * 2 * np.pi
-        phase_g = random.random() * 2 * np.pi
-        phase_b = random.random() * 2 * np.pi
+        # Phase shifts para colores más vibrantes
+        phase_r = random.uniform(0, 4 * np.pi)  # Aumentamos el rango de fases
+        phase_g = random.uniform(0, 4 * np.pi)
+        phase_b = random.uniform(0, 4 * np.pi)
+        
+        # Color offset para más brillo
+        offset_r = random.uniform(0.5, 1.0)
+        offset_g = random.uniform(0.5, 1.0)
+        offset_b = random.uniform(0.5, 1.0)
         
         iteration_count = np.zeros_like(Z, dtype=int)
         
@@ -387,12 +468,22 @@ Generation Time: {info.get('time', 'N/A')} seconds
         log_zn = np.log2(np.abs(Z))
         smooth_iter = iteration_count + 1 - np.log2(log_zn)
         
-        image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 + 128
-        image[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 + 128
-        image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 + 128
+        # Modificamos la aplicación del color para hacerlo más brillante
+        image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 * offset_r + 128
+        image[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 * offset_g + 128
+        image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 * offset_b + 128
         
-        dark_mask = np.all(image < 30, axis=2)
-        image[dark_mask] = [30, 30, 30]
+        # Aseguramos colores más brillantes
+        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)  # Multiplicamos por 1.2 para más brillo
+        
+        # Evitar zonas muy oscuras
+        dark_mask = np.all(image < 50, axis=2)
+        image[dark_mask] = [50, 50, 50]
+        
+        # Añadir variación de saturación
+        gray = np.mean(image, axis=2, keepdims=True)
+        saturation = random.uniform(0.8, 1.2)  # Factor de saturación aleatorio
+        image = np.clip((image - gray) * saturation + gray, 30, 255).astype(np.uint8)
         
         self.current_fractal_info = {
             'type': 'Mandelbrot Set',
@@ -475,6 +566,198 @@ Generation Time: {info.get('time', 'N/A')} seconds
         
         return image
 
+    def generate_fsr(self):
+        start_time = time.time()
+        width, height = self.width, self.height
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Patrones FSR más complejos y aleatorios
+        patterns = [
+            {
+                'name': 'Complex Spiral',
+                'subdivisions': lambda d: max(3, int(8 - d * 0.5)),  # Reduce subdivisions with depth
+                'scale': lambda d: 0.7 + 0.2 * np.sin(d * np.pi/3) * np.exp(-d/8),  # Oscillating scale
+                'rotation_base': lambda d: 137.5 + 45 * np.sin(d * np.pi/4)  # Golden angle variation
+            },
+            {
+                'name': 'Crystalline',
+                'subdivisions': lambda d: random.choice([4, 6, 8, 12]),  # Regular polygons
+                'scale': lambda d: 0.8 - 0.1 * np.log(d + 1) + 0.05 * np.sin(d * np.pi),
+                'rotation_base': lambda d: 60 * (1 + 0.5 * np.sin(d * np.pi/2))  # Hexagonal basis
+            },
+            {
+                'name': 'Quantum Chaos',
+                'subdivisions': lambda d: random.randint(3, 9),  # Highly variable
+                'scale': lambda d: 0.75 - 0.15 * np.random.random() + 0.1 * np.sin(d * np.pi/2),
+                'rotation_base': lambda d: random.choice([30, 45, 60, 90]) * (1 + 0.3 * np.random.random())
+            },
+            {
+                'name': 'Fractal Web',
+                'subdivisions': lambda d: 5 if d < 3 else 3,  # Transition from penta to tri
+                'scale': lambda d: 0.85 * np.exp(-d/10) * (1 + 0.1 * np.sin(d * np.pi)),
+                'rotation_base': lambda d: 72 * (1 + 0.2 * np.cos(d * np.pi/3))
+            }
+        ]
+
+        def safe_color(depth):
+            try:
+                # Colores más dinámicos basados en funciones complejas
+                hue = (depth * 0.1 + np.sin(depth * 0.5)) % 1.0
+                saturation = 0.7 + 0.3 * np.sin(depth * 0.8)
+                value = 0.6 + 0.4 * np.cos(depth * 0.3)
+                
+                # Convertir HSV a RGB
+                c = value * saturation
+                x = c * (1 - abs((hue * 6) % 2 - 1))
+                m = value - c
+                
+                if hue < 1/6:
+                    rgb = (c, x, 0)
+                elif hue < 2/6:
+                    rgb = (x, c, 0)
+                elif hue < 3/6:
+                    rgb = (0, c, x)
+                elif hue < 4/6:
+                    rgb = (0, x, c)
+                elif hue < 5/6:
+                    rgb = (x, 0, c)
+                else:
+                    rgb = (c, 0, x)
+                
+                # Convertir a uint8 con rango [30, 255]
+                color = np.array([(r + m) * 225 + 30 for r in rgb], dtype=np.uint8)
+                return color
+            except:
+                return np.array([50, 50, 50], dtype=np.uint8)
+
+        def create_polygon(center, size, n_sides, depth):
+            try:
+                # Añadir variación en la forma
+                angle_offset = np.random.normal(0, 0.1)  # Pequeña variación aleatoria
+                angles = np.linspace(0, 2 * np.pi, n_sides, endpoint=False) + angle_offset
+                
+                # Distorsión radial
+                radii = size * (1 + 0.2 * np.sin(angles * depth))
+                
+                x = center[0] + radii * np.cos(angles)
+                y = center[1] + radii * np.sin(angles)
+                
+                points = np.column_stack((x, y))
+                points = np.clip(points, 0, [width-1, height-1])
+                return points.astype(np.int32)
+            except Exception as e:
+                logging.warning(f"Error creating polygon: {e}")
+                return None
+
+        def subdivide(points, depth=0, max_depth=7, pattern=None):
+            if points is None or len(points) < 3:
+                return
+            
+            try:
+                # Dibujar el polígono actual con efecto de borde mejorado
+                rr, cc = polygon(points[:, 1], points[:, 0], image.shape)
+                color = safe_color(depth)
+                valid_mask = (rr >= 0) & (rr < height) & (cc >= 0) & (cc < width)
+                
+                if np.any(valid_mask):
+                    # Aplicar color principal
+                    image[rr[valid_mask], cc[valid_mask]] = color
+                    
+                    # Efecto de borde más sofisticado
+                    for offset in range(1, 3):  # Multiple edge layers
+                        edge_color = safe_color(depth + offset)
+                        edge_mask = np.zeros_like(valid_mask)
+                        
+                        # Crear borde más complejo
+                        for i in range(1, offset + 1):
+                            edge_mask[i:] |= valid_mask[:-i]
+                            edge_mask[:-i] |= valid_mask[i:]
+                            edge_mask[:,i:] |= valid_mask[:,:-i]
+                            edge_mask[:,:-i] |= valid_mask[:,i:]
+                        
+                        edge_mask &= ~valid_mask
+                        edge_valid = edge_mask & (rr >= 0) & (rr < height) & (cc >= 0) & (cc < width)
+                        if np.any(edge_valid):
+                            image[rr[edge_valid], cc[edge_valid]] = edge_color
+
+                if depth >= max_depth:
+                    return
+
+                # Aplicar reglas de subdivisión más complejas
+                center = points.mean(axis=0)
+                subdivisions = pattern['subdivisions'](depth)
+                base_scale = pattern['scale'](depth)
+                rotation_base = pattern['rotation_base'](depth)
+
+                # Múltiples capas de subdivisión
+                for layer in range(2):  # Crear dos capas de subdivisión
+                    scale = base_scale * (1 - 0.2 * layer)  # Escala diferente para cada capa
+                    
+                    for i in range(subdivisions):
+                        angle = 2 * np.pi * i / subdivisions
+                        # Rotación más compleja
+                        rotation = rotation_base * (1 + 0.2 * np.random.randn()) * (1 + layer * 0.5)
+                        rot_matrix = np.array([
+                            [np.cos(angle + np.radians(rotation)), -np.sin(angle + np.radians(rotation))],
+                            [np.sin(angle + np.radians(rotation)), np.cos(angle + np.radians(rotation))]
+                        ])
+                        
+                        new_points = points - center
+                        # Distorsión no lineal más compleja
+                        distortion = 1 + 0.15 * np.sin(depth * np.pi/3 + layer * np.pi/2)
+                        new_points = scale * distortion * (new_points @ rot_matrix)
+                        new_points = new_points + center
+                        
+                        # Añadir perturbación aleatoria a los vértices
+                        vertex_noise = np.random.normal(0, 2.0, new_points.shape)
+                        new_points += vertex_noise
+                        
+                        new_points = np.clip(new_points, 0, [width-1, height-1])
+                        
+                        if np.all(np.isfinite(new_points)):
+                            subdivide(new_points.astype(np.int32), depth + 1, max_depth, pattern)
+
+                self.update_progress((depth * 100) // max_depth)
+
+            except Exception as e:
+                logging.warning(f"Error in subdivision: {e}")
+
+        try:
+            # Inicializar con patrón aleatorio
+            pattern = random.choice(patterns)
+            initial_size = min(width, height) * 0.4
+            initial_points = create_polygon(
+                (width//2, height//2), 
+                initial_size, 
+                random.randint(3, 8),  # Número aleatorio de lados inicial
+                0
+            )
+            
+            image.fill(30)
+            
+            if initial_points is not None:
+                max_depth = random.randint(5, 7)  # Profundidad aleatoria
+                subdivide(initial_points, max_depth=max_depth, pattern=pattern)
+                
+                self.current_fractal_info = {
+                    'type': 'Finite Subdivision Rule Fractal',
+                    'parameters': f'Pattern: {pattern["name"]}, Max Depth: {max_depth}',
+                    'iterations': max_depth,
+                    'color_info': 'Dynamic HSV-based coloring with edge effects',
+                    'time': f"{time.time() - start_time:.2f}"
+                }
+            
+            # Asegurar que la imagen no esté completamente negra
+            if np.all(image <= 30):
+                image.fill(50)
+                
+            return image
+            
+        except Exception as e:
+            logging.error(f"Error generating FSR fractal: {e}", exc_info=True)
+            image.fill(50)  # Color de error más visible
+            return image
+
     def generate_fractal(self, fractal_type='julia'):
         # Disable all buttons during generation
         self.disable_buttons()
@@ -490,7 +773,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
             elif fractal_type == 'mandelbrot':
                 image_array = self.generate_mandelbrot()
             else:
-                image_array = self.generate_burning_ship()
+                image_array = self.generate_burning_ship()  # Removed FSR option
                 
             self.update_progress(75)
             
@@ -513,13 +796,13 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def disable_buttons(self):
         """Deshabilitar todos los botones"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:
+                      self.burning_ship_btn, self.save_btn]:  # Removed fsr_btn
             button['state'] = 'disabled'
 
     def enable_buttons(self):
         """Habilitar todos los botones"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:
+                      self.burning_ship_btn, self.save_btn]:  # Removed fsr_btn
             button['state'] = 'normal'
 
     def save_image(self):
