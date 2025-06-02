@@ -63,8 +63,16 @@ class FractalGenerator:
         self.progress.pack(pady=5)
 
         # Create canvas for displaying the fractal
-        self.canvas = tk.Canvas(self.window, width=1280, height=720)
+        self.canvas = tk.Canvas(self.window, width=1280, height=720, bg='#2b2b2b')  # Añadir color de fondo
         self.canvas.pack(pady=10)
+
+        # Añadir texto inicial en el canvas
+        self.canvas.create_text(
+            640, 360,  # Centro del canvas
+            text="Select a fractal type to begin",
+            fill="white",
+            font=('Arial', 20)
+        )
 
         # Create text area for fractal information
         self.info_text = tk.Text(self.window, height=15, width=80)  # Increased height from 5 to 15
@@ -73,7 +81,9 @@ class FractalGenerator:
         self.fractal_cache = {}  # Add cache dictionary
         self.max_cache_size = 5  # Keep last 5 fractals in memory
 
-        self.generate_fractal()
+        # Eliminar esta línea que genera el fractal automáticamente
+        # self.generate_fractal()
+        
         self.create_menu()
         self.window.mainloop()
 
@@ -581,9 +591,6 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def adjust_image_quality(self, image):
         """Enhance image quality with post-processing"""
-        
-        # Apply subtle gaussian blur for smoother gradients
-        image = ndimage.gaussian_filter(image, sigma=[0.5, 0.5, 0])
         
         # Enhance contrast
         p2, p98 = np.percentile(image, (2, 98))
