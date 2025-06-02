@@ -123,13 +123,6 @@ This project was developed exclusively through vibe coding sessions using Claude
 - Tkinter
 - Threading capabilities
 
-## Future Enhancements
-- Additional fractal types (Newton, Phoenix)
-- GPU acceleration support
-- Real-time parameter adjustment
-- Advanced coloring algorithms
-- Export animation capabilities
-
 ## Mathematical References
 1. Mandelbrot, B. (1982). The Fractal Geometry of Nature
 2. Devaney, R. L. (1989). An Introduction to Chaotic Dynamical Systems
