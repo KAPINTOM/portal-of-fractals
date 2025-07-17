@@ -4,12 +4,13 @@ from PIL import Image, ImageTk
 import numpy as np
 import random
 from datetime import datetime
-import time  # Añadido import de time
+import time
 import logging
 import os
-import json  # Import json for configuration saving
+import json
 from concurrent.futures import ThreadPoolExecutor
-from scipy import ndimage  # Moved import here for accessibility
+from scipy import ndimage
+from skimage.draw import polygon  # Added missing import
 
 # Configure logging
 logging.basicConfig(
@@ -24,7 +25,7 @@ class FractalGenerator:
         self.window.title("Portal of Fractals")
         self.window.geometry("1300x900")
         
-        # Agregar dimensiones base
+        # Add base dimensions
         self.width = 1280
         self.height = 720
         
@@ -38,8 +39,8 @@ class FractalGenerator:
         # Create label for fractal selection
         ttk.Label(button_frame, text="Fractal Type:").pack(side=tk.LEFT, padx=5)
         
-        # Agregar valor inicial para C
-        self.C = complex(-0.4, 0.6)  # Valor inicial para conjunto Julia
+        # Add initial value for C
+        self.C = complex(-0.4, 0.6)  # Initial value for Julia set
         
         # Create buttons for different fractals
         self.julia_btn = ttk.Button(button_frame, text="Julia Set", 
@@ -54,11 +55,6 @@ class FractalGenerator:
                                       command=lambda: self.generate_fractal('burning_ship'))
         self.burning_ship_btn.pack(side=tk.LEFT, padx=5)
         
-        # Eliminar estas líneas
-        # self.fsr_btn = ttk.Button(button_frame, text="Subdivision Fractal", 
-        #                          command=lambda: self.generate_fractal('fsr'))
-        # self.fsr_btn.pack(side=tk.LEFT, padx=5)
-        
         # Create save button
         self.save_btn = ttk.Button(button_frame, text="Save HD Image", command=self.save_image)
         self.save_btn.pack(side=tk.LEFT, padx=20)  # Added more padding to separate from fractal buttons
@@ -68,26 +64,23 @@ class FractalGenerator:
         self.progress.pack(pady=5)
 
         # Create canvas for displaying the fractal
-        self.canvas = tk.Canvas(self.window, width=1280, height=720, bg='#2b2b2b')  # Añadir color de fondo
+        self.canvas = tk.Canvas(self.window, width=1280, height=720, bg='#2b2b2b')  # Explicit size
         self.canvas.pack(pady=10)
 
-        # Añadir texto inicial en el canvas
+        # Add initial text to the canvas
         self.canvas.create_text(
-            640, 360,  # Centro del canvas
+            640, 360,  # Center of the canvas
             text="Select a fractal type to begin",
             fill="white",
             font=('Arial', 20)
         )
 
         # Create text area for fractal information
-        self.info_text = tk.Text(self.window, height=15, width=80)  # Increased height from 5 to 15
+        self.info_text = tk.Text(self.window, height=15, width=80)
         self.info_text.pack(pady=10)
 
         self.fractal_cache = {}  # Add cache dictionary
         self.max_cache_size = 5  # Keep last 5 fractals in memory
-
-        # Eliminar esta línea que genera el fractal automáticamente
-        # self.generate_fractal()
         
         self.create_menu()
         self.window.mainloop()
@@ -102,6 +95,7 @@ class FractalGenerator:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Save Current", command=self.save_image)
         file_menu.add_command(label="Save Preferences", command=self.save_preferences)
+        file_menu.add_command(label="Export Parameters", command=self.export_parameters)  # Added
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.window.quit)
         
@@ -244,7 +238,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
         X, Y = np.meshgrid(x, y)
         Z = X + Y*1j
         
-        # Usar los parámetros de color recibidos
+        # Use the received color parameters
         r_mult, g_mult, b_mult = color_mults
         phase_r, phase_g, phase_b = color_phases
         
@@ -272,7 +266,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def generate_julia(self):
         start_time = time.time()
-        max_attempts = 5  # Número máximo de intentos para encontrar una región interesante
+        max_attempts = 5  # Maximum number of attempts to find an interesting region
 
         for attempt in range(max_attempts):
             # Interesting Julia set parameters and positions
@@ -323,30 +317,31 @@ Generation Time: {info.get('time', 'N/A')} seconds
             # Calculate boundaries and generate a sample
             x_range = 3.0 / zoom
             y_range = x_range * self.height / self.width
-            x = np.linspace(center_x - x_range/2, center_x + x_range/2, 100)  # Muestra pequeña
+            x = np.linspace(center_x - x_range/2, center_x + x_range/2, 100)  # Small sample
             y = np.linspace(center_y - y_range/2, center_y + y_range/2, 100)
             X, Y = np.meshgrid(x, y)
             Z = X + Y*1j
             
-            # Calcular una muestra rápida para verificar la región
+            # Calculate a quick sample to check the region
             iteration_count = np.zeros_like(Z, dtype=int)
-            for i in range(50):  # Menos iteraciones para la prueba
+            for i in range(50):  # Fewer iterations for the test
                 mask = np.abs(Z) <= 2
                 Z[mask] = Z[mask]**2 + self.C
                 iteration_count[mask] = i
 
-            # Verificar si la región es interesante
+            # Check if the region is interesting
             unique_values = np.unique(iteration_count)
             if len(unique_values) > 10 and np.mean(iteration_count) > 5:
-                # La región es interesante, proceder con la generación completa
+                # The region is interesting, proceed with full generation
                 break
             elif attempt == max_attempts - 1:
-                # Si es el último intento, usar la región más segura
-                self.C = complex(-0.4, 0.6)  # Valor conocido que genera patrones interesantes
-                center_x, center_y = (0, 0)
-                zoom = 150
+                # If it's the last attempt, use the safest region
+                self.C = complex(-0.4, 0.6)  # Known value that generates interesting patterns
+                center_x, center_y = (-0.1, 0.2)  # Known good position
+                zoom = 200
+                break  # Exit loop after setting safe region
         
-        # Continuar con el código existente de generación
+        # Continue with existing generation code
         x_range = 3.0 / zoom
         y_range = x_range * self.height / self.width
         x = np.linspace(center_x - x_range/2, center_x + x_range/2, self.width)
@@ -382,7 +377,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
                     self.C,
                     (r_mult, g_mult, b_mult), 
                     (phase_r, phase_g, phase_b),
-                    x,  # Añadimos los rangos x e y calculados
+                    x,  # Add the calculated x and y ranges
                     y
                 )
                 futures.append(executor.submit(self.generate_fractal_chunk, params))
@@ -440,17 +435,17 @@ Generation Time: {info.get('time', 'N/A')} seconds
         C = X + Y*1j
         Z = np.zeros_like(C)
         
-        # Enhanced color parameters - Modificamos esta parte
-        r_mult = random.randint(5, 15)  # Aumentamos el rango
+        # Enhanced color parameters - Modified this part
+        r_mult = random.randint(5, 15)  # Increased range
         g_mult = random.randint(5, 15)
         b_mult = random.randint(5, 15)
         
-        # Phase shifts para colores más vibrantes
-        phase_r = random.uniform(0, 4 * np.pi)  # Aumentamos el rango de fases
+        # Phase shifts for more vibrant colors
+        phase_r = random.uniform(0, 4 * np.pi)  # Increased phase range
         phase_g = random.uniform(0, 4 * np.pi)
         phase_b = random.uniform(0, 4 * np.pi)
         
-        # Color offset para más brillo
+        # Color offset for more brightness
         offset_r = random.uniform(0.5, 1.0)
         offset_g = random.uniform(0.5, 1.0)
         offset_b = random.uniform(0.5, 1.0)
@@ -462,27 +457,30 @@ Generation Time: {info.get('time', 'N/A')} seconds
             Z[mask] = Z[mask]**2 + C[mask]
             iteration_count[mask] = i
             
-            if i % 50 == 0:
-                self.update_progress((i * 100) // max_iter)
+            # Update progress continuously
+            self.update_progress((i * 100) // max_iter)
+        
+        # Ensure progress completes
+        self.update_progress(100)
         
         log_zn = np.log2(np.abs(Z))
         smooth_iter = iteration_count + 1 - np.log2(log_zn)
         
-        # Modificamos la aplicación del color para hacerlo más brillante
+        # Modified color application for more brightness
         image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 * offset_r + 128
         image[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 * offset_g + 128
         image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 * offset_b + 128
         
-        # Aseguramos colores más brillantes
-        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)  # Multiplicamos por 1.2 para más brillo
+        # Ensure brighter colors
+        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)  # Multiply by 1.2 for more brightness
         
-        # Evitar zonas muy oscuras
+        # Avoid very dark areas
         dark_mask = np.all(image < 50, axis=2)
         image[dark_mask] = [50, 50, 50]
         
-        # Añadir variación de saturación
+        # Add saturation variation
         gray = np.mean(image, axis=2, keepdims=True)
-        saturation = random.uniform(0.8, 1.2)  # Factor de saturación aleatorio
+        saturation = random.uniform(0.8, 1.2)  # Random saturation factor
         image = np.clip((image - gray) * saturation + gray, 30, 255).astype(np.uint8)
         
         self.current_fractal_info = {
@@ -510,7 +508,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
             {'center': (-1.75, -0.04), 'zoom': 150},  # Side structures
             {'center': (-1.65, -0.02), 'zoom': 200},  # Small ships
             {'center': (-1.8, -0.08), 'zoom': 120},  # Bridge section
-            {'center': (-1.73, -0.01), 'zoom': 180},  # Antenna detail
+            {'center': (-1.73, -0.01), 'zoom': 180},  # Antenna detail,
         ]
         
         # Random selection of region and zoom variation
@@ -542,8 +540,11 @@ Generation Time: {info.get('time', 'N/A')} seconds
             Z[mask] = (np.abs(Z[mask].real) + np.abs(Z[mask].imag)*1j)**2 + C[mask]
             iteration_count[mask] = i
             
-            if i % 50 == 0:
-                self.update_progress((i * 100) // max_iter)
+            # Update progress continuously
+            self.update_progress((i * 100) // max_iter)
+        
+        # Ensure progress completes
+        self.update_progress(100)
         
         log_zn = np.log2(np.abs(Z))
         smooth_iter = iteration_count + 1 - np.log2(log_zn)
@@ -566,198 +567,6 @@ Generation Time: {info.get('time', 'N/A')} seconds
         
         return image
 
-    def generate_fsr(self):
-        start_time = time.time()
-        width, height = self.width, self.height
-        image = np.zeros((height, width, 3), dtype=np.uint8)
-        
-        # Patrones FSR más complejos y aleatorios
-        patterns = [
-            {
-                'name': 'Complex Spiral',
-                'subdivisions': lambda d: max(3, int(8 - d * 0.5)),  # Reduce subdivisions with depth
-                'scale': lambda d: 0.7 + 0.2 * np.sin(d * np.pi/3) * np.exp(-d/8),  # Oscillating scale
-                'rotation_base': lambda d: 137.5 + 45 * np.sin(d * np.pi/4)  # Golden angle variation
-            },
-            {
-                'name': 'Crystalline',
-                'subdivisions': lambda d: random.choice([4, 6, 8, 12]),  # Regular polygons
-                'scale': lambda d: 0.8 - 0.1 * np.log(d + 1) + 0.05 * np.sin(d * np.pi),
-                'rotation_base': lambda d: 60 * (1 + 0.5 * np.sin(d * np.pi/2))  # Hexagonal basis
-            },
-            {
-                'name': 'Quantum Chaos',
-                'subdivisions': lambda d: random.randint(3, 9),  # Highly variable
-                'scale': lambda d: 0.75 - 0.15 * np.random.random() + 0.1 * np.sin(d * np.pi/2),
-                'rotation_base': lambda d: random.choice([30, 45, 60, 90]) * (1 + 0.3 * np.random.random())
-            },
-            {
-                'name': 'Fractal Web',
-                'subdivisions': lambda d: 5 if d < 3 else 3,  # Transition from penta to tri
-                'scale': lambda d: 0.85 * np.exp(-d/10) * (1 + 0.1 * np.sin(d * np.pi)),
-                'rotation_base': lambda d: 72 * (1 + 0.2 * np.cos(d * np.pi/3))
-            }
-        ]
-
-        def safe_color(depth):
-            try:
-                # Colores más dinámicos basados en funciones complejas
-                hue = (depth * 0.1 + np.sin(depth * 0.5)) % 1.0
-                saturation = 0.7 + 0.3 * np.sin(depth * 0.8)
-                value = 0.6 + 0.4 * np.cos(depth * 0.3)
-                
-                # Convertir HSV a RGB
-                c = value * saturation
-                x = c * (1 - abs((hue * 6) % 2 - 1))
-                m = value - c
-                
-                if hue < 1/6:
-                    rgb = (c, x, 0)
-                elif hue < 2/6:
-                    rgb = (x, c, 0)
-                elif hue < 3/6:
-                    rgb = (0, c, x)
-                elif hue < 4/6:
-                    rgb = (0, x, c)
-                elif hue < 5/6:
-                    rgb = (x, 0, c)
-                else:
-                    rgb = (c, 0, x)
-                
-                # Convertir a uint8 con rango [30, 255]
-                color = np.array([(r + m) * 225 + 30 for r in rgb], dtype=np.uint8)
-                return color
-            except:
-                return np.array([50, 50, 50], dtype=np.uint8)
-
-        def create_polygon(center, size, n_sides, depth):
-            try:
-                # Añadir variación en la forma
-                angle_offset = np.random.normal(0, 0.1)  # Pequeña variación aleatoria
-                angles = np.linspace(0, 2 * np.pi, n_sides, endpoint=False) + angle_offset
-                
-                # Distorsión radial
-                radii = size * (1 + 0.2 * np.sin(angles * depth))
-                
-                x = center[0] + radii * np.cos(angles)
-                y = center[1] + radii * np.sin(angles)
-                
-                points = np.column_stack((x, y))
-                points = np.clip(points, 0, [width-1, height-1])
-                return points.astype(np.int32)
-            except Exception as e:
-                logging.warning(f"Error creating polygon: {e}")
-                return None
-
-        def subdivide(points, depth=0, max_depth=7, pattern=None):
-            if points is None or len(points) < 3:
-                return
-            
-            try:
-                # Dibujar el polígono actual con efecto de borde mejorado
-                rr, cc = polygon(points[:, 1], points[:, 0], image.shape)
-                color = safe_color(depth)
-                valid_mask = (rr >= 0) & (rr < height) & (cc >= 0) & (cc < width)
-                
-                if np.any(valid_mask):
-                    # Aplicar color principal
-                    image[rr[valid_mask], cc[valid_mask]] = color
-                    
-                    # Efecto de borde más sofisticado
-                    for offset in range(1, 3):  # Multiple edge layers
-                        edge_color = safe_color(depth + offset)
-                        edge_mask = np.zeros_like(valid_mask)
-                        
-                        # Crear borde más complejo
-                        for i in range(1, offset + 1):
-                            edge_mask[i:] |= valid_mask[:-i]
-                            edge_mask[:-i] |= valid_mask[i:]
-                            edge_mask[:,i:] |= valid_mask[:,:-i]
-                            edge_mask[:,:-i] |= valid_mask[:,i:]
-                        
-                        edge_mask &= ~valid_mask
-                        edge_valid = edge_mask & (rr >= 0) & (rr < height) & (cc >= 0) & (cc < width)
-                        if np.any(edge_valid):
-                            image[rr[edge_valid], cc[edge_valid]] = edge_color
-
-                if depth >= max_depth:
-                    return
-
-                # Aplicar reglas de subdivisión más complejas
-                center = points.mean(axis=0)
-                subdivisions = pattern['subdivisions'](depth)
-                base_scale = pattern['scale'](depth)
-                rotation_base = pattern['rotation_base'](depth)
-
-                # Múltiples capas de subdivisión
-                for layer in range(2):  # Crear dos capas de subdivisión
-                    scale = base_scale * (1 - 0.2 * layer)  # Escala diferente para cada capa
-                    
-                    for i in range(subdivisions):
-                        angle = 2 * np.pi * i / subdivisions
-                        # Rotación más compleja
-                        rotation = rotation_base * (1 + 0.2 * np.random.randn()) * (1 + layer * 0.5)
-                        rot_matrix = np.array([
-                            [np.cos(angle + np.radians(rotation)), -np.sin(angle + np.radians(rotation))],
-                            [np.sin(angle + np.radians(rotation)), np.cos(angle + np.radians(rotation))]
-                        ])
-                        
-                        new_points = points - center
-                        # Distorsión no lineal más compleja
-                        distortion = 1 + 0.15 * np.sin(depth * np.pi/3 + layer * np.pi/2)
-                        new_points = scale * distortion * (new_points @ rot_matrix)
-                        new_points = new_points + center
-                        
-                        # Añadir perturbación aleatoria a los vértices
-                        vertex_noise = np.random.normal(0, 2.0, new_points.shape)
-                        new_points += vertex_noise
-                        
-                        new_points = np.clip(new_points, 0, [width-1, height-1])
-                        
-                        if np.all(np.isfinite(new_points)):
-                            subdivide(new_points.astype(np.int32), depth + 1, max_depth, pattern)
-
-                self.update_progress((depth * 100) // max_depth)
-
-            except Exception as e:
-                logging.warning(f"Error in subdivision: {e}")
-
-        try:
-            # Inicializar con patrón aleatorio
-            pattern = random.choice(patterns)
-            initial_size = min(width, height) * 0.4
-            initial_points = create_polygon(
-                (width//2, height//2), 
-                initial_size, 
-                random.randint(3, 8),  # Número aleatorio de lados inicial
-                0
-            )
-            
-            image.fill(30)
-            
-            if initial_points is not None:
-                max_depth = random.randint(5, 7)  # Profundidad aleatoria
-                subdivide(initial_points, max_depth=max_depth, pattern=pattern)
-                
-                self.current_fractal_info = {
-                    'type': 'Finite Subdivision Rule Fractal',
-                    'parameters': f'Pattern: {pattern["name"]}, Max Depth: {max_depth}',
-                    'iterations': max_depth,
-                    'color_info': 'Dynamic HSV-based coloring with edge effects',
-                    'time': f"{time.time() - start_time:.2f}"
-                }
-            
-            # Asegurar que la imagen no esté completamente negra
-            if np.all(image <= 30):
-                image.fill(50)
-                
-            return image
-            
-        except Exception as e:
-            logging.error(f"Error generating FSR fractal: {e}", exc_info=True)
-            image.fill(50)  # Color de error más visible
-            return image
-
     def generate_fractal(self, fractal_type='julia'):
         # Disable all buttons during generation
         self.disable_buttons()
@@ -767,23 +576,23 @@ Generation Time: {info.get('time', 'N/A')} seconds
         try:
             self.update_progress(0)
             
-            # Generar el fractal
+            # Generate the fractal
             if fractal_type == 'julia':
                 image_array = self.generate_julia()
             elif fractal_type == 'mandelbrot':
                 image_array = self.generate_mandelbrot()
             else:
-                image_array = self.generate_burning_ship()  # Removed FSR option
+                image_array = self.generate_burning_ship()
                 
             self.update_progress(75)
             
-            # Aplicar mejoras de calidad
+            # Apply quality improvements
             image_array = self.adjust_image_quality(image_array)
             
-            # Renderizar la imagen
+            # Render the image
             if self.render_image(image_array):
                 self.update_info()
-                self.update_progress(100)
+                self.update_progress(100)  # Ensure completion
             else:
                 raise Exception("Failed to render image")
                 
@@ -794,44 +603,44 @@ Generation Time: {info.get('time', 'N/A')} seconds
             self.enable_buttons()
 
     def disable_buttons(self):
-        """Deshabilitar todos los botones"""
+        """Disable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:  # Removed fsr_btn
+                      self.burning_ship_btn, self.save_btn]:
             button['state'] = 'disabled'
 
     def enable_buttons(self):
-        """Habilitar todos los botones"""
+        """Enable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:  # Removed fsr_btn
+                      self.burning_ship_btn, self.save_btn]:
             button['state'] = 'normal'
 
     def save_image(self):
-        """Guarda el último fractal generado en alta resolución"""
+        """Save the last generated fractal in high resolution"""
         if not self.current_fractal_info or not self.current_image:
             print("No fractal generated to save")
             return
             
         self.save_btn['state'] = 'disabled'
         try:
-            # Crear directorio si no existe
+            # Create directory if it doesn't exist
             if not os.path.exists('fractals'):
                 os.makedirs('fractals')
             
-            # Obtener información del fractal actual
+            # Get information about the current fractal
             fractal_type = self.current_fractal_info['type']
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             
-            # Generar nombre de archivo
+            # Generate file name
             filename = f"fractals/{fractal_type.replace(' ', '_')}_{timestamp}_4K.png"
             
-            # Redimensionar a 4K
+            # Resize to 4K
             image_4k = self.current_image.resize((3840, 2160), Image.Resampling.LANCZOS)
             
-            # Aplicar mejoras de calidad
+            # Apply quality improvements
             image_array = np.array(image_4k)
             enhanced_image = self.adjust_image_quality(image_array)
             
-            # Guardar imagen
+            # Save image
             Image.fromarray(enhanced_image).save(filename, "PNG", optimize=True)
             
             print(f"Image saved successfully as {filename}")
@@ -890,29 +699,34 @@ Generation Time: {info.get('time', 'N/A')} seconds
             self.info_text.pack(pady=10)
 
     def render_image(self, image_array):
-        """Método centralizado para renderizar imágenes"""
+        """Centralized method to render images"""
+        # Check for empty image
+        if image_array is None or image_array.size == 0:
+            logging.error("Empty image array in render_image")
+            return False
+            
         try:
-            # Asegurarse de que la imagen esté en el formato correcto
+            # Ensure the image is in the correct format
             image_array = image_array.astype(np.uint8)
             
-            # Convertir numpy array a PIL Image
+            # Convert numpy array to PIL Image
             image = Image.fromarray(image_array)
             
-            # Redimensionar si es necesario para ajustarse al canvas
-            canvas_width = self.canvas.winfo_width()
-            canvas_height = self.canvas.winfo_height()
+            # Use fixed dimensions instead of canvas size
+            canvas_width = self.width
+            canvas_height = self.height
             
             if image.size != (canvas_width, canvas_height):
                 image = image.resize((canvas_width, canvas_height), Image.Resampling.LANCZOS)
             
-            # Guardar referencia a la imagen actual
+            # Save reference to the current image
             self.current_image = image
             
-            # Convertir a PhotoImage y mostrar
+            # Convert to PhotoImage and display
             photo = ImageTk.PhotoImage(image)
-            self.canvas.delete("all")  # Limpiar canvas antes de mostrar nueva imagen
+            self.canvas.delete("all")  # Clear canvas before displaying new image
             self.canvas.create_image(canvas_width//2, canvas_height//2, image=photo)
-            self.canvas.image = photo  # Mantener referencia
+            self.canvas.image = photo  # Keep reference
             
             return True
         except Exception as e:
