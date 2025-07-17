@@ -10,7 +10,6 @@ import os
 import json
 from concurrent.futures import ThreadPoolExecutor
 from scipy import ndimage
-from skimage.draw import polygon  # Added missing import
 
 # Configure logging
 logging.basicConfig(
@@ -64,12 +63,12 @@ class FractalGenerator:
         self.progress.pack(pady=5)
 
         # Create canvas for displaying the fractal
-        self.canvas = tk.Canvas(self.window, width=1280, height=720, bg='#2b2b2b')  # Explicit size
+        self.canvas = tk.Canvas(self.window, width=self.width, height=self.height, bg='#2b2b2b')
         self.canvas.pack(pady=10)
 
         # Add initial text to the canvas
         self.canvas.create_text(
-            640, 360,  # Center of the canvas
+            self.width//2, self.height//2,  # Center of the canvas
             text="Select a fractal type to begin",
             fill="white",
             font=('Arial', 20)
@@ -95,7 +94,7 @@ class FractalGenerator:
         menubar.add_cascade(label="File", menu=file_menu)
         file_menu.add_command(label="Save Current", command=self.save_image)
         file_menu.add_command(label="Save Preferences", command=self.save_preferences)
-        file_menu.add_command(label="Export Parameters", command=self.export_parameters)  # Added
+        file_menu.add_command(label="Export Parameters", command=self.export_parameters)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.window.quit)
         
@@ -166,7 +165,7 @@ Domain: Complex plane bounded by [-1.5, 1.5] × [-1, 1]"""
                 classification = f"""Julia Set Classification:
 Pattern Type: {pattern_type}
 Connected Set: {abs(c_value) <= 2}
-Symmetry: {abs(c_value.imag) < 0.0001 and "Real Axis" or "Complex Plane"}"""
+Symmetry: {"Real Axis" if abs(c_value.imag) < 0.0001 else "Complex Plane"}"""
 
             elif fractal_type == 'Mandelbrot Set':
                 math_formula = """Mathematical Formula:
@@ -227,7 +226,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def generate_fractal_chunk(self, params):
         """Generate a portion of the fractal"""
-        start_row, end_row, width, height, C, color_mults, color_phases, x_range, y_range = params
+        start_row, end_row, width, height, C, color_mults, color_phases, x_range, y_range, max_iter = params
         chunk = np.zeros((end_row - start_row, width, 3), dtype=np.uint8)
         
         # Use the provided x and y ranges
@@ -243,15 +242,23 @@ Generation Time: {info.get('time', 'N/A')} seconds
         phase_r, phase_g, phase_b = color_phases
         
         iteration_count = np.zeros_like(Z, dtype=int)
-        max_iter = 1000
         
         for i in range(max_iter):
             mask = np.abs(Z) <= 2
             Z[mask] = Z[mask]**2 + C
             iteration_count[mask] = i
 
-        log_zn = np.log2(np.abs(Z))
-        smooth_iter = iteration_count + 1 - np.log2(log_zn)
+        # Create smooth_iter array
+        smooth_iter = np.full_like(iteration_count, max_iter, dtype=float)   # inside points set to max_iter
+
+        # For points that escaped (|Z|>2) we compute the fractional iteration
+        escaped = np.abs(Z) > 2
+        if np.any(escaped):
+            # Only compute for escaped points
+            log_zn = np.log2(np.abs(Z[escaped]))
+            # Add small epsilon to avoid log(0)
+            log_zn = np.log2(np.abs(Z[escaped]) + 1e-10)
+            smooth_iter[escaped] = iteration_count[escaped] + 1 - np.log2(log_zn)
 
         # Apply coloring
         chunk[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 + 128
@@ -261,91 +268,67 @@ Generation Time: {info.get('time', 'N/A')} seconds
         # Ensure no pure black areas
         dark_mask = np.all(chunk < 30, axis=2)
         chunk[dark_mask] = [30, 30, 30]
+        
+        # Ensure valid values
+        chunk = np.nan_to_num(chunk, nan=30)
+        chunk = np.clip(chunk, 30, 255).astype(np.uint8)
 
         return chunk
 
     def generate_julia(self):
         start_time = time.time()
-        max_attempts = 5  # Maximum number of attempts to find an interesting region
+        max_iter = 1000
 
-        for attempt in range(max_attempts):
-            # Interesting Julia set parameters and positions
-            julia_regions = [
-                {
-                    'C': complex(-0.4, 0.6), 
-                    'center': (-0.1, 0.2),
-                    'zoom': 200
-                },  # Dragon-like with detail
-                {
-                    'C': complex(0.285, 0), 
-                    'center': (0.3, -0.1),
-                    'zoom': 150
-                },  # Dendrite detail
-                {
-                    'C': complex(0.45, 0.1428),
-                    'center': (0, 0.15),
-                    'zoom': 180
-                },  # Exotic Spiral focus
-                {
-                    'C': complex(-0.70176, -0.3842),
-                    'center': (-0.2, 0.1),
-                    'zoom': 250
-                },  # Spiraling detail
-                {
-                    'C': complex(-0.835, -0.2321),
-                    'center': (0.1, -0.3),
-                    'zoom': 300
-                },  # Branch detail
-                {
-                    'C': complex(0.35, 0.35),
-                    'center': (-0.15, 0.15),
-                    'zoom': 220
-                }  # Symmetric detail
-            ]
-            
-            # Random selection of region and parameters
-            region = random.choice(julia_regions)
-            self.C = region['C']
-            base_zoom = region['zoom']
-            zoom = base_zoom * random.uniform(0.5, 2.0)
-            center_x, center_y = region['center']
-            
-            # Add some random variation to the center position
-            center_x += random.uniform(-0.1, 0.1)
-            center_y += random.uniform(-0.1, 0.1)
-            
-            # Calculate boundaries and generate a sample
-            x_range = 3.0 / zoom
-            y_range = x_range * self.height / self.width
-            x = np.linspace(center_x - x_range/2, center_x + x_range/2, 100)  # Small sample
-            y = np.linspace(center_y - y_range/2, center_y + y_range/2, 100)
-            X, Y = np.meshgrid(x, y)
-            Z = X + Y*1j
-            
-            # Calculate a quick sample to check the region
-            iteration_count = np.zeros_like(Z, dtype=int)
-            for i in range(50):  # Fewer iterations for the test
-                mask = np.abs(Z) <= 2
-                Z[mask] = Z[mask]**2 + self.C
-                iteration_count[mask] = i
-
-            # Check if the region is interesting
-            unique_values = np.unique(iteration_count)
-            if len(unique_values) > 10 and np.mean(iteration_count) > 5:
-                # The region is interesting, proceed with full generation
-                break
-            elif attempt == max_attempts - 1:
-                # If it's the last attempt, use the safest region
-                self.C = complex(-0.4, 0.6)  # Known value that generates interesting patterns
-                center_x, center_y = (-0.1, 0.2)  # Known good position
-                zoom = 200
-                break  # Exit loop after setting safe region
+        # Interesting Julia set parameters and positions
+        julia_regions = [
+            {
+                'C': complex(-0.4, 0.6), 
+                'center': (0.0, 0.0),  # Centered view
+                'zoom': 1.0
+            },  # Full view
+            {
+                'C': complex(0.285, 0), 
+                'center': (0.0, 0.0),
+                'zoom': 1.0
+            },  # Full view
+            {
+                'C': complex(0.45, 0.1428),
+                'center': (0.0, 0.0),
+                'zoom': 1.0
+            },  # Full view
+            {
+                'C': complex(-0.70176, -0.3842),
+                'center': (-0.2, 0.1),
+                'zoom': 1.5
+            },  # Slightly zoomed
+            {
+                'C': complex(-0.835, -0.2321),
+                'center': (0.1, -0.3),
+                'zoom': 2.0
+            },  # Zoomed view
+            {
+                'C': complex(0.35, 0.35),
+                'center': (-0.15, 0.15),
+                'zoom': 1.5
+            }  # Zoomed view
+        ]
         
-        # Continue with existing generation code
-        x_range = 3.0 / zoom
-        y_range = x_range * self.height / self.width
-        x = np.linspace(center_x - x_range/2, center_x + x_range/2, self.width)
-        y = np.linspace(center_y - y_range/2, center_y + y_range/2, self.height)
+        # Random selection of region and parameters
+        region = random.choice(julia_regions)
+        self.C = region['C']
+        base_zoom = region['zoom']
+        zoom = base_zoom * random.uniform(0.8, 1.2)
+        center_x, center_y = region['center']
+        
+        # Add some random variation to the center position
+        center_x += random.uniform(-0.1, 0.1)
+        center_y += random.uniform(-0.1, 0.1)
+        
+        # Continue with generation code
+        x_range_val = 3.0 / zoom
+        y_range_val = x_range_val * self.height / self.width
+        x = np.linspace(center_x - x_range_val/2, center_x + x_range_val/2, self.width)
+        y = np.linspace(center_y - y_range_val/2, center_y + y_range_val/2, self.height)
         
         # Split into chunks for parallel processing
         chunks = 4
@@ -378,7 +361,8 @@ Generation Time: {info.get('time', 'N/A')} seconds
                     (r_mult, g_mult, b_mult), 
                     (phase_r, phase_g, phase_b),
                     x,  # Add the calculated x and y ranges
-                    y
+                    y,
+                    max_iter  # Pass max_iter to the chunk function
                 )
                 futures.append(executor.submit(self.generate_fractal_chunk, params))
                 self.update_progress((i + 1) * 25)
@@ -396,7 +380,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
                 f'Center: ({center_x:.4f}, {center_y:.4f}), '
                 f'Zoom: {zoom:.1f}x'
             ),
-            'iterations': 1000,
+            'iterations': max_iter,
             'color_info': f'RGB multipliers: ({r_mult}, {g_mult}, {b_mult})',
             'phase_info': f'Phase shifts: ({phase_r:.4f}, {phase_g:.4f}, {phase_b:.4f})',
             'time': f"{time.time() - start_time:.2f}"
@@ -407,7 +391,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def generate_mandelbrot(self):
         start_time = time.time()
         
-        width, height = 1280, 720
+        width, height = self.width, self.height
         max_iter = 1000
         image = np.zeros((height, width, 3), dtype=np.uint8)
         
@@ -458,13 +442,21 @@ Generation Time: {info.get('time', 'N/A')} seconds
             iteration_count[mask] = i
             
             # Update progress continuously
-            self.update_progress((i * 100) // max_iter)
+            progress_value = min(100, (i * 100) // max_iter)
+            self.update_progress(progress_value)
         
-        # Ensure progress completes
-        self.update_progress(100)
+        # Create smooth_iter array
+        smooth_iter = np.full_like(iteration_count, max_iter, dtype=float)   # inside points set to max_iter
+
+        # For points that escaped (|Z|>2) we compute the fractional iteration
+        escaped = np.abs(Z) > 2
+        if np.any(escaped):
+            # Only compute for escaped points
+            log_zn = np.log2(np.abs(Z[escaped]) + 1e-10)
+            smooth_iter[escaped] = iteration_count[escaped] + 1 - np.log2(log_zn)
         
-        log_zn = np.log2(np.abs(Z))
-        smooth_iter = iteration_count + 1 - np.log2(log_zn)
+        # Ensure valid values
+        smooth_iter = np.nan_to_num(smooth_iter, nan=max_iter)
         
         # Modified color application for more brightness
         image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 * offset_r + 128
@@ -472,7 +464,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
         image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 * offset_b + 128
         
         # Ensure brighter colors
-        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)  # Multiply by 1.2 for more brightness
+        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)
         
         # Avoid very dark areas
         dark_mask = np.all(image < 50, axis=2)
@@ -497,24 +489,28 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def generate_burning_ship(self):
         start_time = time.time()
         
-        width, height = 1280, 720
+        width, height = self.width, self.height
         max_iter = 1000
         image = np.zeros((height, width, 3), dtype=np.uint8)
         
         # Interesting regions in the Burning Ship fractal
         regions = [
-            {'center': (-1.4, -0.1), 'zoom': 50},  # Main ship
-            {'center': (-1.7, -0.028), 'zoom': 100},  # Detailed hull
-            {'center': (-1.75, -0.04), 'zoom': 150},  # Side structures
-            {'center': (-1.65, -0.02), 'zoom': 200},  # Small ships
-            {'center': (-1.8, -0.08), 'zoom': 120},  # Bridge section
-            {'center': (-1.73, -0.01), 'zoom': 180},  # Antenna detail,
+            {'center': (-1.8, -0.05), 'zoom': 1.0},  # Full view
+            {'center': (-1.75, -0.04), 'zoom': 1.5},  # Zoomed view
+            {'center': (-1.7, -0.03), 'zoom': 2.0},  # More zoomed
+            {'center': (-1.65, -0.02), 'zoom': 2.5},  # Detailed view
+            {'center': (-1.8, -0.08), 'zoom': 1.2},  # Bridge section
+            {'center': (-1.73, -0.01), 'zoom': 1.8},  # Antenna detail
         ]
         
         # Random selection of region and zoom variation
         region = random.choice(regions)
         center_x, center_y = region['center']
-        zoom = region['zoom'] * random.uniform(0.5, 2.0)
+        zoom = region['zoom'] * random.uniform(0.8, 1.2)
+        
+        # Add some random variation to center
+        center_x += random.uniform(-0.05, 0.05)
+        center_y += random.uniform(-0.05, 0.05)
         
         # Calculate boundaries based on zoom and center
         x_range = 3.0 / zoom
@@ -525,36 +521,63 @@ Generation Time: {info.get('time', 'N/A')} seconds
         C = X + Y*1j
         Z = np.zeros_like(C)
         
-        r_mult = random.randint(3, 12)
-        g_mult = random.randint(3, 12)
-        b_mult = random.randint(3, 12)
+        # Enhanced color parameters
+        r_mult = random.randint(5, 15)
+        g_mult = random.randint(5, 15)
+        b_mult = random.randint(5, 15)
         
-        phase_r = random.random() * 2 * np.pi
-        phase_g = random.random() * 2 * np.pi
-        phase_b = random.random() * 2 * np.pi
+        # Phase shifts for vibrant colors
+        phase_r = random.uniform(0, 4 * np.pi)
+        phase_g = random.uniform(0, 4 * np.pi)
+        phase_b = random.uniform(0, 4 * np.pi)
+        
+        # Color offsets
+        offset_r = random.uniform(0.5, 1.0)
+        offset_g = random.uniform(0.5, 1.0)
+        offset_b = random.uniform(0.5, 1.0)
         
         iteration_count = np.zeros_like(Z, dtype=int)
         
         for i in range(max_iter):
             mask = np.abs(Z) <= 2
-            Z[mask] = (np.abs(Z[mask].real) + np.abs(Z[mask].imag)*1j)**2 + C[mask]
+            # Burning Ship formula: (|Re| + |Im|i)^2 + c
+            real_part = np.abs(Z[mask].real)
+            imag_part = np.abs(Z[mask].imag)
+            Z[mask] = (real_part + imag_part*1j)**2 + C[mask]
             iteration_count[mask] = i
             
             # Update progress continuously
-            self.update_progress((i * 100) // max_iter)
+            progress_value = min(100, (i * 100) // max_iter)
+            self.update_progress(progress_value)
         
-        # Ensure progress completes
-        self.update_progress(100)
+        # Create smooth_iter array
+        smooth_iter = np.full_like(iteration_count, max_iter, dtype=float)
         
-        log_zn = np.log2(np.abs(Z))
-        smooth_iter = iteration_count + 1 - np.log2(log_zn)
+        # For escaped points
+        escaped = np.abs(Z) > 2
+        if np.any(escaped):
+            log_zn = np.log2(np.abs(Z[escaped]) + 1e-10)
+            smooth_iter[escaped] = iteration_count[escaped] + 1 - np.log2(log_zn)
         
-        image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 + 128
-        image[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 + 128
-        image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 + 128
+        # Ensure valid values
+        smooth_iter = np.nan_to_num(smooth_iter, nan=max_iter)
         
-        dark_mask = np.all(image < 30, axis=2)
-        image[dark_mask] = [30, 30, 30]
+        # Apply coloring with offsets
+        image[:,:,0] = np.sin(smooth_iter * r_mult/30 + phase_r) * 127 * offset_r + 128
+        image[:,:,1] = np.sin(smooth_iter * g_mult/30 + phase_g) * 127 * offset_g + 128
+        image[:,:,2] = np.sin(smooth_iter * b_mult/30 + phase_b) * 127 * offset_b + 128
+        
+        # Brighten image
+        image = np.clip(image * 1.2, 30, 255).astype(np.uint8)
+        
+        # Avoid dark areas
+        dark_mask = np.all(image < 50, axis=2)
+        image[dark_mask] = [50, 50, 50]
+        
+        # Add saturation variation
+        gray = np.mean(image, axis=2, keepdims=True)
+        saturation = random.uniform(0.8, 1.2)
+        image = np.clip((image - gray) * saturation + gray, 30, 255).astype(np.uint8)
         
         self.current_fractal_info = {
             'type': 'Burning Ship Fractal',
@@ -636,12 +659,8 @@ Generation Time: {info.get('time', 'N/A')} seconds
             # Resize to 4K
             image_4k = self.current_image.resize((3840, 2160), Image.Resampling.LANCZOS)
             
-            # Apply quality improvements
-            image_array = np.array(image_4k)
-            enhanced_image = self.adjust_image_quality(image_array)
-            
             # Save image
-            Image.fromarray(enhanced_image).save(filename, "PNG", optimize=True)
+            image_4k.save(filename, "PNG", optimize=True)
             
             print(f"Image saved successfully as {filename}")
             self.update_progress(100)
@@ -669,6 +688,9 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def export_parameters(self):
         """Export current fractal parameters for reproduction"""
+        if not self.current_fractal_info:
+            return
+            
         params = {
             'fractal_type': self.current_fractal_info['type'],
             'parameters': self.current_fractal_info['parameters'],
@@ -683,7 +705,6 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def adjust_image_quality(self, image):
         """Enhance image quality with post-processing"""
-        
         # Enhance contrast
         p2, p98 = np.percentile(image, (2, 98))
         image = np.clip(image, p2, p98)
@@ -715,9 +736,6 @@ Generation Time: {info.get('time', 'N/A')} seconds
             # Use fixed dimensions instead of canvas size
             canvas_width = self.width
             canvas_height = self.height
-            
-            if image.size != (canvas_width, canvas_height):
-                image = image.resize((canvas_width, canvas_height), Image.Resampling.LANCZOS)
             
             # Save reference to the current image
             self.current_image = image
