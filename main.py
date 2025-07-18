@@ -9,7 +9,7 @@ import logging
 import os
 import json
 from concurrent.futures import ThreadPoolExecutor
-from scipy import ndimage
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -30,6 +30,8 @@ class FractalGenerator:
         
         self.current_image = None
         self.current_fractal_info = {}
+        self.generation_thread = None
+        self.stop_generation = threading.Event()
         
         # Create button frames for better organization
         button_frame = ttk.Frame(self.window)
@@ -43,16 +45,21 @@ class FractalGenerator:
         
         # Create buttons for different fractals
         self.julia_btn = ttk.Button(button_frame, text="Julia Set", 
-                               command=lambda: self.generate_fractal('julia'))
+                               command=lambda: self.start_fractal_generation('julia'))
         self.julia_btn.pack(side=tk.LEFT, padx=5)
         
         self.mandelbrot_btn = ttk.Button(button_frame, text="Mandelbrot Set", 
-                                    command=lambda: self.generate_fractal('mandelbrot'))
+                                    command=lambda: self.start_fractal_generation('mandelbrot'))
         self.mandelbrot_btn.pack(side=tk.LEFT, padx=5)
         
         self.burning_ship_btn = ttk.Button(button_frame, text="Burning Ship", 
-                                      command=lambda: self.generate_fractal('burning_ship'))
+                                      command=lambda: self.start_fractal_generation('burning_ship'))
         self.burning_ship_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Add Newton fractal button
+        self.newton_btn = ttk.Button(button_frame, text="Newton Fractal", 
+                                      command=lambda: self.start_fractal_generation('newton'))
+        self.newton_btn.pack(side=tk.LEFT, padx=5)
         
         # Create save button
         self.save_btn = ttk.Button(button_frame, text="Save HD Image", command=self.save_image)
@@ -179,7 +186,7 @@ A point c is in the Mandelbrot set if the sequence remains bounded
 Main cardioid: Points where |c| ≤ 1/4
 Period-2 bulb: Points where c ≈ -1"""
 
-            else:  # Burning Ship
+            elif fractal_type == 'Burning Ship Fractal':
                 math_formula = """Mathematical Formula:
 zₙ₊₁ = (|Re(zₙ)| + |Im(zₙ)|i)² + c
 where z₀ = 0
@@ -189,11 +196,29 @@ Domain: Complex plane c"""
                 classification = """Burning Ship Classification:
 Variation of the Mandelbrot set using absolute values
 Creates flame-like structures and a distinctive 'ship' shape"""
+            
+            elif fractal_type == 'Newton Fractal':
+                poly_info = info.get('polynomial', 'Unknown polynomial')
+                roots_info = info.get('roots', 'Unknown roots')
+                
+                math_formula = f"""Mathematical Formula:
+Newton-Raphson Iteration:
+zₙ₊₁ = zₙ - p(zₙ)/p'(zₙ)
+where p(z) = {poly_info}
+Roots: {roots_info}
+Convergence Criterion: |p(z)| < 1e-5
+Domain: Complex plane centered at (0,0) with scale ±1.5"""
+
+                classification = """Newton Fractal Classification:
+Visualizes basins of attraction for roots of polynomial
+Colors represent which root a starting point converges to
+Brightness represents speed of convergence"""
 
             # Color algorithm description
             color_info = f"""Color Algorithm:
 RGB = (sin(s·r_m/30 + φr)·127 + 128, sin(s·g_m/30 + φg)·127 + 128, sin(s·b_m/30 + φb)·127 + 128)
-where s = iteration + 1 - log₂(log₂(|z|))
+where s = iteration + 1 - log₂(log₂(|z|)) for escape fractals
+For Newton: s = iteration count
 {color_info}
 {phase_info}"""
 
@@ -500,7 +525,7 @@ Generation Time: {info.get('time', 'N/A')} seconds
             {'center': (-1.7, -0.03), 'zoom': 2.0},  # More zoomed
             {'center': (-1.65, -0.02), 'zoom': 2.5},  # Detailed view
             {'center': (-1.8, -0.08), 'zoom': 1.2},  # Bridge section
-            {'center': (-1.73, -0.01), 'zoom': 1.8},  # Antenna detail
+            {'center': (-1.73, -0.01), 'zoom': 1.8},  # Antenna detail,
         ]
         
         # Random selection of region and zoom variation
@@ -590,12 +615,242 @@ Generation Time: {info.get('time', 'N/A')} seconds
         
         return image
 
-    def generate_fractal(self, fractal_type='julia'):
-        # Disable all buttons during generation
+    def generate_newton_chunk(self, params):
+        """Generate a portion of the Newton fractal"""
+        start_row, end_row, width, height, roots, color_mults, color_phases, x_range, y_range, max_iter = params
+        
+        # Extract color parameters
+        r_mult, g_mult, b_mult = color_mults
+        phase_r, phase_g, phase_b = color_phases
+        
+        # Create the grid for this chunk
+        x = x_range
+        y = y_range[start_row:end_row]
+        X, Y = np.meshgrid(x, y)
+        Z = X + Y * 1j
+        
+        # Define polynomial and derivative for the given roots
+        def p(z):
+            return (z - roots[0]) * (z - roots[1]) * (z - roots[2])
+        
+        def p_prime(z):
+            term1 = (z - roots[1]) * (z - roots[2])
+            term2 = (z - roots[0]) * (z - roots[2])
+            term3 = (z - roots[0]) * (z - roots[1])
+            return term1 + term2 + term3
+        
+        # Create arrays for iteration count and root indices
+        iteration_count = np.zeros(Z.shape, dtype=int)
+        root_index = np.zeros(Z.shape, dtype=int) - 1  # -1 means not converged
+        
+        # Mask for points that haven't converged
+        mask = np.ones(Z.shape, dtype=bool)
+        
+        # Newton-Raphson iteration
+        for i in range(max_iter):
+            Z_active = Z[mask]
+            f_val = p(Z_active)
+            f_prime_val = p_prime(Z_active)
+            
+            # Avoid division by zero
+            with np.errstate(divide='ignore', invalid='ignore'):
+                step = f_val / (f_prime_val + 1e-20)
+            
+            Z[mask] = Z_active - step
+            f_val_new = p(Z[mask])
+            
+            # Check convergence (|f(z)| < tolerance)
+            converged = np.abs(f_val_new) < 1e-5
+            iteration_count[mask] = np.where(converged, i, iteration_count[mask])
+            
+            # For converged points, find the closest root
+            if np.any(converged):
+                # Compute distances to roots for converged points
+                dist = np.abs(Z_active[converged, None] - np.array(roots)[None, :])
+                closest = np.argmin(dist, axis=1)
+                
+                # Fix: Create a temporary array to avoid broadcasting issues
+                active_root = root_index[mask]
+                active_root[converged] = closest
+                root_index[mask] = active_root
+            
+            # Update mask: remove converged points
+            mask[mask] = ~converged
+            
+            # If no points left, break
+            if not np.any(mask):
+                break
+        
+        # For any remaining points that didn't converge, assign to the closest root
+        unconverged = (root_index == -1)
+        if np.any(unconverged):
+            dist = np.abs(Z[unconverged, None] - np.array(roots)[None, :])
+            closest = np.argmin(dist, axis=1)
+            root_index[unconverged] = closest
+            iteration_count[unconverged] = max_iter
+        
+        # Convert root index to a phase shift (for coloring)
+        num_roots = len(roots)
+        root_phase = root_index * (2 * np.pi / num_roots)
+        
+        # Create color chunk
+        chunk = np.zeros((end_row - start_row, width, 3), dtype=np.uint8)
+        smooth_iter = iteration_count.astype(float)
+        
+        # Apply coloring with root phase shift
+        # FIX: Ensure we use the correct dimensions for assignment
+        r_channel = np.sin(smooth_iter * r_mult/30 + phase_r + root_phase) * 127 + 128
+        g_channel = np.sin(smooth_iter * g_mult/30 + phase_g + root_phase) * 127 + 128
+        b_channel = np.sin(smooth_iter * b_mult/30 + phase_b + root_phase) * 127 + 128
+        
+        # Assign to chunk
+        chunk[:, :, 0] = r_channel
+        chunk[:, :, 1] = g_channel
+        chunk[:, :, 2] = b_channel
+        
+        # Ensure no pure black
+        dark_mask = np.all(chunk < 30, axis=2)
+        chunk[dark_mask] = [30, 30, 30]
+        
+        return chunk
+
+    def generate_newton(self):
+        start_time = time.time()
+        width, height = self.width, self.height
+        max_iter = 50
+        
+        # Define interesting regions for Newton fractal
+        regions = [
+            {'center': (0.0, 0.0), 'zoom': 1.0},    # Full view
+            {'center': (-0.5, -0.5), 'zoom': 1.5},  # Top-left quadrant
+            {'center': (0.5, -0.5), 'zoom': 1.5},   # Top-right quadrant
+            {'center': (-0.5, 0.5), 'zoom': 1.5},   # Bottom-left quadrant
+            {'center': (0.5, 0.5), 'zoom': 1.5},    # Bottom-right quadrant
+            {'center': (0.0, 0.0), 'zoom': 2.0},    # Zoomed center
+            {'center': (1.0, 0.0), 'zoom': 2.0},    # Zoomed right
+            {'center': (-1.0, 0.0), 'zoom': 2.0},   # Zoomed left
+            {'center': (0.0, 1.0), 'zoom': 2.0},    # Zoomed top
+            {'center': (0.0, -1.0), 'zoom': 2.0},   # Zoomed bottom
+        ]
+        
+        # Random selection of region
+        region = random.choice(regions)
+        center_x, center_y = region['center']
+        zoom = region['zoom'] * random.uniform(0.8, 1.2)
+        
+        # Calculate boundaries based on zoom and center
+        x_range_val = 3.0 / zoom
+        y_range_val = x_range_val * height / width
+        x = np.linspace(center_x - x_range_val/2, center_x + x_range_val/2, width)
+        y = np.linspace(center_y - y_range_val/2, center_y + y_range_val/2, height)
+        
+        # Create random polynomial with complex roots
+        roots = []
+        for _ in range(3):  # Cubic polynomial
+            real = random.uniform(-1.5, 1.5)
+            imag = random.uniform(-1.5, 1.5)
+            roots.append(complex(real, imag))
+        
+        # Format polynomial for display
+        poly_str = f"(z - ({roots[0].real:.2f}+{roots[0].imag:.2f}i))"
+        poly_str += f"(z - ({roots[1].real:.2f}+{roots[1].imag:.2f}i))"
+        poly_str += f"(z - ({roots[2].real:.2f}+{roots[2].imag:.2f}i))"
+        
+        # Format roots for display
+        roots_str = ", ".join([f"{r.real:.2f}{r.imag:+.2f}i" for r in roots])
+        
+        # Enhanced color parameters
+        r_mult = random.randint(5, 15)
+        g_mult = random.randint(5, 15)
+        b_mult = random.randint(5, 15)
+        phase_r = random.uniform(0, 4 * np.pi)
+        phase_g = random.uniform(0, 4 * np.pi)
+        phase_b = random.uniform(0, 4 * np.pi)
+        
+        # Split into chunks for parallel processing
+        chunks = 4
+        chunk_size = height // chunks
+        self.update_progress(0)
+        
+        # Initialize array for final image
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for i in range(chunks):
+                start_row = i * chunk_size
+                end_row = start_row + chunk_size if i < chunks - 1 else height
+                
+                params = (
+                    start_row, 
+                    end_row, 
+                    width, 
+                    height, 
+                    roots, 
+                    (r_mult, g_mult, b_mult), 
+                    (phase_r, phase_g, phase_b),
+                    x,  # x_range
+                    y,  # y_range
+                    max_iter
+                )
+                futures.append(executor.submit(self.generate_newton_chunk, params))
+            
+            # Combine chunks as they complete
+            for i, future in enumerate(futures):
+                chunk = future.result()
+                start_row = i * chunk_size
+                end_row = start_row + chunk_size if i < chunks - 1 else height
+                image[start_row:end_row, :, :] = chunk
+                self.update_progress((i + 1) * (100 / chunks))
+        
+        self.update_progress(100)
+        
+        # Brighten image
+        image = np.clip(image * 1.1, 30, 255).astype(np.uint8)
+        
+        # Avoid dark areas
+        dark_mask = np.all(image < 50, axis=2)
+        image[dark_mask] = [50, 50, 50]
+        
+        # Store fractal information
+        self.current_fractal_info = {
+            'type': 'Newton Fractal',
+            'parameters': f'Center: ({center_x:.4f}, {center_y:.4f}), Zoom: {zoom:.1f}x',
+            'iterations': max_iter,
+            'color_info': f'RGB multipliers: ({r_mult}, {g_mult}, {b_mult})',
+            'phase_info': f'Phase shifts: ({phase_r:.4f}, {phase_g:.4f}, {phase_b:.4f})',
+            'polynomial': poly_str,
+            'roots': roots_str,
+            'time': f"{time.time() - start_time:.2f}"
+        }
+        
+        return image
+
+    def start_fractal_generation(self, fractal_type):
+        """Start fractal generation in a separate thread"""
+        # Cancel any ongoing generation
+        if self.generation_thread and self.generation_thread.is_alive():
+            self.stop_generation.set()
+            self.generation_thread.join(timeout=0.5)
+        
+        # Reset stop flag
+        self.stop_generation.clear()
+        
+        # Disable buttons during generation
         self.disable_buttons()
         self.progress['value'] = 0
         self.window.update_idletasks()
         
+        # Start new thread for generation
+        self.generation_thread = threading.Thread(
+            target=self.generate_fractal,
+            args=(fractal_type,),
+            daemon=True
+        )
+        self.generation_thread.start()
+
+    def generate_fractal(self, fractal_type='julia'):
+        """Generate fractal in a background thread"""
         try:
             self.update_progress(0)
             
@@ -604,8 +859,12 @@ Generation Time: {info.get('time', 'N/A')} seconds
                 image_array = self.generate_julia()
             elif fractal_type == 'mandelbrot':
                 image_array = self.generate_mandelbrot()
-            else:
+            elif fractal_type == 'burning_ship':
                 image_array = self.generate_burning_ship()
+            elif fractal_type == 'newton':
+                image_array = self.generate_newton()
+            else:
+                image_array = self.generate_julia()  # Default to Julia
                 
             self.update_progress(75)
             
@@ -620,21 +879,25 @@ Generation Time: {info.get('time', 'N/A')} seconds
                 raise Exception("Failed to render image")
                 
         except Exception as e:
-            print(f"Error generating fractal: {e}")
-            logging.error(f"Error generating fractal: {e}", exc_info=True)
+            error_msg = f"Error generating fractal: {str(e)}"
+            print(error_msg)
+            logging.error(error_msg, exc_info=True)
+            # Display error in info text
+            self.info_text.delete(1.0, tk.END)
+            self.info_text.insert(tk.END, error_msg)
         finally:
             self.enable_buttons()
 
     def disable_buttons(self):
         """Disable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:
+                      self.burning_ship_btn, self.newton_btn, self.save_btn]:
             button['state'] = 'disabled'
 
     def enable_buttons(self):
         """Enable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.save_btn]:
+                      self.burning_ship_btn, self.newton_btn, self.save_btn]:
             button['state'] = 'normal'
 
     def save_image(self):
