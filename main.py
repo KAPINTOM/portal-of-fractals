@@ -22,20 +22,21 @@ class FractalGenerator:
     def __init__(self):
         self.window = tk.Tk()
         self.window.title("Portal of Fractals")
-        self.window.geometry("1300x900")
+        self.window.geometry("1280x720")
+        self.window.minsize(800, 600)
         
-        # Add base dimensions
-        self.width = 1280
-        self.height = 720
-        
+        # Variables for dynamic sizing
+        self.canvas_width = 500
+        self.canvas_height = 500
         self.current_image = None
         self.current_fractal_info = {}
         self.generation_thread = None
         self.stop_generation = threading.Event()
+        self.info_window = None  # Reference to info window
         
         # Create button frames for better organization
         button_frame = ttk.Frame(self.window)
-        button_frame.pack(pady=10)
+        button_frame.pack(pady=10, fill=tk.X, padx=10)
         
         # Create label for fractal selection
         ttk.Label(button_frame, text="Fractal Type:").pack(side=tk.LEFT, padx=5)
@@ -65,31 +66,68 @@ class FractalGenerator:
         self.save_btn = ttk.Button(button_frame, text="Save HD Image", command=self.save_image)
         self.save_btn.pack(side=tk.LEFT, padx=20)  # Added more padding to separate from fractal buttons
 
+        # Create info button
+        self.info_btn = ttk.Button(button_frame, text="Show Info", command=self.show_info_window)
+        self.info_btn.pack(side=tk.LEFT, padx=10)
+
         # Create progress bar
         self.progress = ttk.Progressbar(self.window, length=300, mode='determinate')
-        self.progress.pack(pady=5)
+        self.progress.pack(pady=5, fill=tk.X, padx=10)
 
-        # Create canvas for displaying the fractal
-        self.canvas = tk.Canvas(self.window, width=self.width, height=self.height, bg='#2b2b2b')
-        self.canvas.pack(pady=10)
-
+        # Create canvas for displaying the fractal with dynamic sizing
+        self.canvas_frame = ttk.Frame(self.window)
+        self.canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.canvas = tk.Canvas(self.canvas_frame, bg='#2b2b2b')
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
         # Add initial text to the canvas
-        self.canvas.create_text(
-            self.width//2, self.height//2,  # Center of the canvas
+        self.initial_text_id = self.canvas.create_text(
+            250, 250,  # Initial center position
             text="Select a fractal type to begin",
             fill="white",
-            font=('Arial', 20)
+            font=('Arial', 20),
+            tags="initial_text"
         )
-
-        # Create text area for fractal information
-        self.info_text = tk.Text(self.window, height=15, width=80)
-        self.info_text.pack(pady=10)
+        
+        # Bind to window resize event
+        self.window.bind("<Configure>", self.on_window_resize)
+        self.canvas.bind("<Configure>", self.on_canvas_resize)
 
         self.fractal_cache = {}  # Add cache dictionary
         self.max_cache_size = 5  # Keep last 5 fractals in memory
         
         self.create_menu()
         self.window.mainloop()
+    
+    def on_window_resize(self, event):
+        """Handle window resize events"""
+        # Only process if it's the main window being resized
+        if event.widget == self.window:
+            self.update_canvas_size()
+    
+    def on_canvas_resize(self, event):
+        """Handle canvas resize events"""
+        # Update canvas dimensions
+        self.canvas_width = event.width
+        self.canvas_height = event.height
+        
+        # Center the initial text
+        self.canvas.coords(
+            self.initial_text_id,
+            self.canvas_width // 2,
+            self.canvas_height // 2
+        )
+    
+    def update_canvas_size(self):
+        """Update canvas dimensions based on current size"""
+        self.canvas_width = self.canvas.winfo_width()
+        self.canvas_height = self.canvas.winfo_height()
+        
+        # Ensure minimum size
+        if self.canvas_width < 100 or self.canvas_height < 100:
+            self.canvas_width = 100
+            self.canvas_height = 100
 
     def create_menu(self):
         """Create menu bar with additional options"""
@@ -108,7 +146,46 @@ class FractalGenerator:
         # View menu
         view_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="View", menu=view_menu)
-        view_menu.add_command(label="Toggle Info Panel", command=self.toggle_info)
+        view_menu.add_command(label="Show Information", command=self.show_info_window)
+
+    def show_info_window(self):
+        """Show the fractal information in a resizable popup window"""
+        if self.info_window and self.info_window.winfo_exists():
+            # Bring existing window to front
+            self.info_window.lift()
+            self.info_window.deiconify()
+            return
+        
+        # Create new info window
+        self.info_window = tk.Toplevel(self.window)
+        self.info_window.title("Fractal Information")
+        self.info_window.geometry("800x600")
+        self.info_window.minsize(400, 300)
+        
+        # Create frame for text and scrollbar
+        frame = ttk.Frame(self.info_window)
+        frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Create scrollbar
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Create text area for fractal information
+        self.info_text = tk.Text(
+            frame, 
+            wrap=tk.WORD, 
+            yscrollcommand=scrollbar.set,
+            font=('Courier New', 10)  # Monospaced for better formatting
+        )
+        self.info_text.pack(fill=tk.BOTH, expand=True)
+        scrollbar.config(command=self.info_text.yview)
+        
+        # Add current info if available
+        if self.current_fractal_info:
+            self.update_info()
+        
+        # Make window resizable
+        self.info_window.resizable(True, True)
 
     def update_progress(self, value):
         """Thread-safe progress update"""
@@ -128,6 +205,9 @@ class FractalGenerator:
                 pass
 
     def update_info(self):
+        if not self.current_fractal_info:
+            return
+            
         info = self.current_fractal_info
         
         try:
@@ -224,7 +304,7 @@ For Newton: s = iteration count
 
             # Technical parameters
             tech_info = f"""Technical Parameters:
-Resolution: {self.canvas.winfo_width()}x{self.canvas.winfo_height()}
+Resolution: {self.canvas_width}x{self.canvas_height}
 Maximum Iterations: {info.get('iterations', 'N/A')}
 Generation Time: {info.get('time', 'N/A')} seconds
 {parameters}"""
@@ -240,14 +320,17 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
 {tech_info}"""
             
-            self.info_text.delete(1.0, tk.END)
-            self.info_text.insert(tk.END, full_info)
+            # Update text widget only if info window exists
+            if self.info_window and self.info_text:
+                self.info_text.delete(1.0, tk.END)
+                self.info_text.insert(tk.END, full_info)
             
         except Exception as e:
             error_info = f"Error displaying information: {str(e)}"
             print(f"Debug - Error details: {e}")  # For debugging
-            self.info_text.delete(1.0, tk.END)
-            self.info_text.insert(tk.END, error_info)
+            if self.info_window and self.info_text:
+                self.info_text.delete(1.0, tk.END)
+                self.info_text.insert(tk.END, error_info)
 
     def generate_fractal_chunk(self, params):
         """Generate a portion of the fractal"""
@@ -303,6 +386,11 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def generate_julia(self):
         start_time = time.time()
         max_iter = 1000
+        
+        # Update canvas dimensions
+        self.update_canvas_size()
+        width = self.canvas_width
+        height = self.canvas_height
 
         # Interesting Julia set parameters and positions
         julia_regions = [
@@ -351,13 +439,13 @@ Generation Time: {info.get('time', 'N/A')} seconds
         
         # Continue with generation code
         x_range_val = 3.0 / zoom
-        y_range_val = x_range_val * self.height / self.width
-        x = np.linspace(center_x - x_range_val/2, center_x + x_range_val/2, self.width)
-        y = np.linspace(center_y - y_range_val/2, center_y + y_range_val/2, self.height)
+        y_range_val = x_range_val * height / width
+        x = np.linspace(center_x - x_range_val/2, center_x + x_range_val/2, width)
+        y = np.linspace(center_y - y_range_val/2, center_y + y_range_val/2, height)
         
         # Split into chunks for parallel processing
         chunks = 4
-        chunk_size = self.height // chunks
+        chunk_size = height // chunks
         self.update_progress(0)
         
         # Generate color parameters once for all chunks
@@ -369,19 +457,19 @@ Generation Time: {info.get('time', 'N/A')} seconds
         phase_b = random.random() * 2 * np.pi
         
         # Initialize array for final image
-        image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+        image = np.zeros((height, width, 3), dtype=np.uint8)
         
         with ThreadPoolExecutor() as executor:
             futures = []
             for i in range(chunks):
                 start_row = i * chunk_size
-                end_row = start_row + chunk_size if i < chunks - 1 else self.height
+                end_row = start_row + chunk_size if i < chunks - 1 else height
                 
                 params = (
                     start_row, 
                     end_row, 
-                    self.width, 
-                    self.height, 
+                    width, 
+                    height, 
                     self.C,
                     (r_mult, g_mult, b_mult), 
                     (phase_r, phase_g, phase_b),
@@ -416,7 +504,11 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def generate_mandelbrot(self):
         start_time = time.time()
         
-        width, height = self.width, self.height
+        # Update canvas dimensions
+        self.update_canvas_size()
+        width = self.canvas_width
+        height = self.canvas_height
+        
         max_iter = 1000
         image = np.zeros((height, width, 3), dtype=np.uint8)
         
@@ -514,7 +606,11 @@ Generation Time: {info.get('time', 'N/A')} seconds
     def generate_burning_ship(self):
         start_time = time.time()
         
-        width, height = self.width, self.height
+        # Update canvas dimensions
+        self.update_canvas_size()
+        width = self.canvas_width
+        height = self.canvas_height
+        
         max_iter = 1000
         image = np.zeros((height, width, 3), dtype=np.uint8)
         
@@ -716,7 +812,12 @@ Generation Time: {info.get('time', 'N/A')} seconds
 
     def generate_newton(self):
         start_time = time.time()
-        width, height = self.width, self.height
+        
+        # Update canvas dimensions
+        self.update_canvas_size()
+        width = self.canvas_width
+        height = self.canvas_height
+        
         max_iter = 50
         
         # Define interesting regions for Newton fractal
@@ -841,6 +942,11 @@ Generation Time: {info.get('time', 'N/A')} seconds
         self.progress['value'] = 0
         self.window.update_idletasks()
         
+        # Remove initial text if it exists
+        if self.initial_text_id:
+            self.canvas.delete(self.initial_text_id)
+            self.initial_text_id = None
+        
         # Start new thread for generation
         self.generation_thread = threading.Thread(
             target=self.generate_fractal,
@@ -883,21 +989,24 @@ Generation Time: {info.get('time', 'N/A')} seconds
             print(error_msg)
             logging.error(error_msg, exc_info=True)
             # Display error in info text
-            self.info_text.delete(1.0, tk.END)
-            self.info_text.insert(tk.END, error_msg)
+            if self.info_window and self.info_text:
+                self.info_text.delete(1.0, tk.END)
+                self.info_text.insert(tk.END, error_msg)
         finally:
             self.enable_buttons()
 
     def disable_buttons(self):
         """Disable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.newton_btn, self.save_btn]:
+                      self.burning_ship_btn, self.newton_btn, 
+                      self.save_btn, self.info_btn]:
             button['state'] = 'disabled'
 
     def enable_buttons(self):
         """Enable all buttons"""
         for button in [self.julia_btn, self.mandelbrot_btn, 
-                      self.burning_ship_btn, self.newton_btn, self.save_btn]:
+                      self.burning_ship_btn, self.newton_btn, 
+                      self.save_btn, self.info_btn]:
             button['state'] = 'normal'
 
     def save_image(self):
@@ -975,13 +1084,6 @@ Generation Time: {info.get('time', 'N/A')} seconds
         
         return image
 
-    def toggle_info(self):
-        """Toggle visibility of info panel"""
-        if self.info_text.winfo_viewable():
-            self.info_text.pack_forget()
-        else:
-            self.info_text.pack(pady=10)
-
     def render_image(self, image_array):
         """Centralized method to render images"""
         # Check for empty image
@@ -996,17 +1098,19 @@ Generation Time: {info.get('time', 'N/A')} seconds
             # Convert numpy array to PIL Image
             image = Image.fromarray(image_array)
             
-            # Use fixed dimensions instead of canvas size
-            canvas_width = self.width
-            canvas_height = self.height
-            
             # Save reference to the current image
             self.current_image = image
             
             # Convert to PhotoImage and display
             photo = ImageTk.PhotoImage(image)
             self.canvas.delete("all")  # Clear canvas before displaying new image
-            self.canvas.create_image(canvas_width//2, canvas_height//2, image=photo)
+            
+            # Create image at center of current canvas
+            self.canvas.create_image(
+                self.canvas_width//2, 
+                self.canvas_height//2, 
+                image=photo
+            )
             self.canvas.image = photo  # Keep reference
             
             return True
